@@ -17,7 +17,7 @@ Understanding how offensive tools work is fundamental to defending against them.
 
 ## Architecture
 
-> Diagram coming soon (Excalidraw asset)
+<img src="diagram.png" width="100%">
 
 The project has two sides:
 
