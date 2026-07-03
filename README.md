@@ -17,7 +17,7 @@ Understanding how offensive tools work is fundamental to defending against them.
 
 ## Architecture
 
-<img src="diagram.png" width="100%">
+<img src="docs/diagram.png" width="100%">
 
 The project has two sides:
 
@@ -54,18 +54,44 @@ TYPE|LENGTH|EXTRA\n
 - [x] C2 server with SQLite victim persistence
 
 ### In progress
+- [ ] Command whitelist (security hardening)
+- [ ] Checksum validation (protocol integrity)
+- [ ] Reconnection jitter and exponential backoff
 - [ ] File download command
-- [ ] Reconnection logic
 - [ ] Multiple victim management
+
+## Building
+
+### Linux/Mac
+```bash
+chmod +x scripts/build.sh
+./scripts/build.sh
+```
+
+### Windows
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build.ps1
+```
+
+Binaries will be in `dist/`:
+- `svchost` — RAT client (run on victim)
+- `server` — C2 server (run on attacker)
 
 ## Project Structure
 
 ```
 kast-c2/
-├── svchost.py      # RAT client (victim side)
-├── server.py       # C2 server (attacker side)
-├── db.py           # SQLite helpers
-└── loot/           # Exfiltrated data (gitignored)
+├── scripts/
+│   ├── build.sh         # Linux/Mac build script
+│   └── build.ps1        # Windows build script
+├── docs/
+│   └── diagram.png      # Architecture diagram
+├── svchost.py           # RAT client (victim side)
+├── server.py            # C2 server (attacker side)
+├── db.py                # SQLite helpers
+├── requirements.txt     # Python dependencies
+├── LICENSE
+└── README.md
 ```
 
 ## Environment
